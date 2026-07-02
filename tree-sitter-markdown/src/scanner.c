@@ -244,6 +244,14 @@ static unsigned serialize(Scanner *s, char *buffer) {
     buffer[size++] = (char)s->column;
     buffer[size++] = (char)s->fenced_code_block_delimiter_length;
     size_t blocks_count = s->open_blocks.size;
+    // The buffer is fixed-size (TREE_SITTER_SERIALIZATION_BUFFER_SIZE), and deep
+    // nesting (255+ open blocks) doesn't fit; writing past the end corrupts the
+    // parser. Serialize nothing instead: restoring the empty state surfaces the
+    // pathological input as ERROR nodes - visible and safe, unlike truncated
+    // state (silently wrong trees) or the overflow (memory corruption).
+    if (size + blocks_count * sizeof(Block) > TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
+        return 0;
+    }
     if (blocks_count > 0) {
         memcpy(&buffer[size], s->open_blocks.items,
                blocks_count * sizeof(Block));
