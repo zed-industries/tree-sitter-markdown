@@ -82,4 +82,53 @@ mod tests {
             .set_language(&INLINE_LANGUAGE.into())
             .expect("Error loading Markdown inline grammar");
     }
+
+    fn parse_nested_block_quotes(depth: usize) -> tree_sitter::Tree {
+        let mut text = String::new();
+        for line in 0..depth {
+            text.push_str(&"> ".repeat(line + 1));
+            text.push_str("a\n");
+        }
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&LANGUAGE.into())
+            .expect("Error loading Markdown block grammar");
+        parser
+            .parse(&text, None)
+            .expect("parsing nested block quotes should produce a tree")
+    }
+
+    #[test]
+    fn deeply_nested_blocks_do_not_overflow_scanner_serialization() {
+        // 300 nested block quotes keep more open blocks than fit in
+        // tree-sitter's fixed serialization buffer. Unguarded, serialize()
+        // overflowed it and corrupted the parser (see the guard in scanner.c
+        // and upstream issue #243). Guarded, the scanner serializes no state
+        // and the pathological input surfaces as ERROR nodes, so assert that
+        // the parse completes and the tree is walkable, not that it's clean.
+        let tree = parse_nested_block_quotes(300);
+        let mut cursor = tree.walk();
+        let mut nodes = 0usize;
+        'walk: loop {
+            nodes += 1;
+            if cursor.goto_first_child() {
+                continue;
+            }
+            while !cursor.goto_next_sibling() {
+                if !cursor.goto_parent() {
+                    break 'walk;
+                }
+            }
+        }
+        assert!(nodes > 0);
+    }
+
+    #[test]
+    fn moderately_nested_blocks_parse_cleanly() {
+        // Nesting that fits within the serialization buffer must not be
+        // affected by the overflow guard.
+        let tree = parse_nested_block_quotes(100);
+        assert_eq!(tree.root_node().kind(), "document");
+        assert!(!tree.root_node().has_error());
+    }
 }
